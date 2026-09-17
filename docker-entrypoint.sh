@@ -3,9 +3,29 @@ set -e
 
 echo "Starting OpenGRC container..."
 
+# Ensure .env exists
+if [ ! -f /var/www/html/.env ]; then
+    if [ -f /var/www/html/.env.example ]; then
+        echo "Creating .env from .env.example..."
+        cp /var/www/html/.env.example /var/www/html/.env
+    else
+        touch /var/www/html/.env
+    fi
+fi
+
+# Ensure SQLite file exists if using sqlite
+if [ "$DB_CONNECTION" = "sqlite" ] || [ -z "$DB_HOST" ]; then
+    mkdir -p /var/www/html/database
+    if [ ! -f /var/www/html/database/opengrc.sqlite ]; then
+        touch /var/www/html/database/opengrc.sqlite
+    fi
+    chown -R www-data:www-data /var/www/html/database
+    chmod -R 775 /var/www/html/database
+fi
+
 # Wait for database to be ready (if using external database)
 if [ -n "$DB_HOST" ]; then
-    echo "Waiting for database connection..."
+    echo "Waiting for database connection to $DB_HOST..."
     max_attempts=30
     attempt=0
     while [ $attempt -lt $max_attempts ]; do
@@ -30,33 +50,46 @@ if [ -n "$DB_HOST" ]; then
     fi
 fi
 
+# Handle APP_KEY generation and export
+if [ -z "$APP_KEY" ]; then
+    EXISTING_KEY=$(grep -E '^APP_KEY=[^[:space:]]+' /var/www/html/.env 2>/dev/null | cut -d '=' -f2- || true)
+    if [ -z "$EXISTING_KEY" ]; then
+        echo "Generating application key..."
+        php artisan key:generate --force
+        EXISTING_KEY=$(grep -E '^APP_KEY=[^[:space:]]+' /var/www/html/.env 2>/dev/null | cut -d '=' -f2- || true)
+    fi
+    export APP_KEY="$EXISTING_KEY"
+fi
+
 # Run database migrations
 echo "Running database migrations..."
 php artisan migrate --force
 
 # Seed and create admin user only on first run (check if users table is empty)
 USER_COUNT=$(php -r "
-    \$dsn = 'mysql:host=' . getenv('DB_HOST') . ';port=' . (getenv('DB_PORT') ?: 3306) . ';dbname=' . getenv('DB_DATABASE');
-    \$pdo = new PDO(\$dsn, getenv('DB_USERNAME'), getenv('DB_PASSWORD'));
-    echo \$pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
+    try {
+        if (getenv('DB_HOST')) {
+            \$dsn = 'mysql:host=' . getenv('DB_HOST') . ';port=' . (getenv('DB_PORT') ?: 3306) . ';dbname=' . getenv('DB_DATABASE');
+            \$pdo = new PDO(\$dsn, getenv('DB_USERNAME'), getenv('DB_PASSWORD'));
+        } else {
+            \$pdo = new PDO('sqlite:/var/www/html/database/opengrc.sqlite');
+        }
+        echo \$pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
+    } catch (Exception \$e) {
+        echo '0';
+    }
 " 2>/dev/null || echo "0")
 
 if [ "$USER_COUNT" = "0" ]; then
     echo "First run detected - seeding database and creating admin user..."
 
-    # Generate APP_KEY if not set
-    if [ -z "$APP_KEY" ]; then
-        echo "Generating application key..."
-        php artisan key:generate --force
-    fi
-
     php artisan db:seed --class=SettingsSeeder --force
     php artisan opengrc:create-user "${ADMIN_EMAIL:-admin@opengrc.local}" "${ADMIN_PASSWORD:-admin123}"
     php artisan db:seed --class=RolePermissionSeeder --force
     php artisan settings:set general.name "${APP_NAME:-OpenGRC}"
-    php artisan settings:set general.url "${APP_URL:-http://localhost}"
+    php artisan settings:set general.url "${APP_URL:-http://localhost:8080}"
     php artisan settings:set storage.driver private
-    php artisan storage:link
+    php artisan storage:link || true
 fi
 
 # Clear and cache config for production
@@ -66,7 +99,7 @@ php artisan route:cache
 php artisan view:cache
 
 # Ensure storage directories have correct permissions
-chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
+chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache /var/www/html/.env 2>/dev/null || true
 chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
 # Create PHP-FPM run directory if it doesn't exist

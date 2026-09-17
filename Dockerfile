@@ -69,9 +69,10 @@ RUN sed -i 's/pm = dynamic/pm = ondemand/' /etc/php/${PHP_VERSION}/fpm/pool.d/ww
     && sed -i 's/post_max_size = .*/post_max_size = 20M/' /etc/php/${PHP_VERSION}/fpm/php.ini \
     && sed -i 's/max_execution_time = .*/max_execution_time = 60/' /etc/php/${PHP_VERSION}/fpm/php.ini
 
-# Configure PHP-FPM to log to file
+# Configure PHP-FPM to log to file and pass environment variables
 RUN sed -i "s|;error_log = log/php${PHP_VERSION}-fpm.log|error_log = /var/log/php${PHP_VERSION}-fpm.log|" /etc/php/${PHP_VERSION}/fpm/php-fpm.conf \
-    && sed -i 's|;catch_workers_output = yes|catch_workers_output = yes|' /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
+    && sed -i 's|;catch_workers_output = yes|catch_workers_output = yes|' /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf \
+    && sed -i 's/;clear_env = no/clear_env = no/' /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
 
 # Enable Apache modules for PHP-FPM
 RUN a2enmod rewrite \
@@ -170,10 +171,11 @@ EXPOSE 80
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=5 \
-    CMD curl -f http://localhost/ || exit 1
+    CMD curl -f http://localhost/health || exit 1
 
 # Copy and set up entrypoint script
 COPY docker-entrypoint.sh /var/www/html/docker-entrypoint.sh
-RUN chmod +x /var/www/html/docker-entrypoint.sh
+RUN sed -i 's/\r$//' /var/www/html/docker-entrypoint.sh \
+    && chmod +x /var/www/html/docker-entrypoint.sh
 
 ENTRYPOINT ["/var/www/html/docker-entrypoint.sh"]
