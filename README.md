@@ -15,6 +15,8 @@ OpenGRC is a cyber Governance, Risk, and Compliance web application intended for
 
 Above all, OpenGRC is written to solve cyber compliance headaches that tend to be caused by complex enterprise solutions. It doesn't have to be that hard!
 
+This Repo version is modified to be deployed in Docker Desktop for Windows 11.
+
 ## Documentation
 All OpenGRC Documentation is maintained at [https://docs.opengrc.com](https://docs.opengrc.com).
 
